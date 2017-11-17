@@ -22,8 +22,15 @@ android {
     }
 }
 
+repositories {
+    flatDir {
+        dirs './libs'
+    }
+}
+
 dependencies {
     implementation fileTree(dir: 'libs', include: ['*.jar'])
+    implementation (name: 'arcore_client', ext: 'aar')
     implementation"org.jetbrains.kotlin:kotlin-stdlib-jre7:$kotlin_version"
     implementation 'com.android.support:appcompat-v7:26.1.0'
     implementation 'com.android.support.constraint:constraint-layout:1.0.2'
