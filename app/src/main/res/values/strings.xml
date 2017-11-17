@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">TryingOutARCore</string>
+    <string name="camera_permission_needed">Camera permission is needed to run this application</string>
 </resources>
