@@ -1,9 +1,11 @@
 package andrecardoso.tryingoutarcore
 
+import andrecardoso.tryingoutarcore.rendering.BackgroundRenderer
 import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
+import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 import android.support.v7.app.AppCompatActivity
 import android.os.Bundle
@@ -25,6 +27,8 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         val CAMERA_PERMISSION_CODE = 0
     }
 
+    private val backgroundRenderer = BackgroundRenderer()
+
     lateinit var session: Session
     lateinit var config: Config
 
@@ -37,11 +41,23 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         setupARCore()
     }
 
+    override fun onPause() {
+        super.onPause()
+        // Note that the order matters - GLSurfaceView is paused first so that it does not try
+        // to query the session. If Session is paused before GLSurfaceView, GLSurfaceView may
+        // still call session.update() and get a SessionPausedException.
+        surfaceView.onPause()
+        session.pause()
+    }
+
     override fun onResume() {
         super.onResume()
 
         if (hasCameraPermission()) {
             Log.d(TAG, "Resume ARCore session")
+            // Note that order matters - see the note in onPause(), the reverse applies here.
+            surfaceView.onResume()
+            session.resume(config)
         } else {
             requestPermissions(arrayOf(Manifest.permission.CAMERA), CAMERA_PERMISSION_CODE)
         }
@@ -55,12 +71,35 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     }
 
     override fun onDrawFrame(gl: GL10?) {
+        // Clear screen to notify driver it should not load any pixels from previous frame.
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT or GLES20.GL_DEPTH_BUFFER_BIT)
+
+
+        try {
+            // Obtain the current frame from ARSession. When the configuration is set to
+            // UpdateMode.BLOCKING (it is by default), this will throttle the rendering to the
+            // camera framerate.
+            val frame = session.update()
+            backgroundRenderer.draw(frame)
+        } catch (t: Throwable) {
+            // Avoid crashing the application due to unhandled exceptions.
+            Log.e(TAG, "Exception on the OpenGL thread", t)
+        }
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
+        GLES20.glViewport(0, 0, width, height)
+        // Notify ARCore session that the view size changed so that the perspective matrix and
+        // the video background can be properly adjusted.
+        session.setDisplayGeometry(width.toFloat(), height.toFloat())
     }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
+        GLES20.glClearColor(0.1f, 0.1f, 0.1f, 1.0f)
+
+        // Create the texture and pass it to ARCore session to be filled during update().
+        backgroundRenderer.createOnGlThread(this)
+        session.setCameraTextureName(backgroundRenderer.textureId)
     }
 
     private fun setupSurfaceView() {
