@@ -1,12 +1,15 @@
 package andrecardoso.tryingoutarcore
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
 import android.support.v7.app.AppCompatActivity
 import android.os.Bundle
 import android.support.annotation.StringRes
 import android.util.Log
+import android.view.View
+import android.view.WindowManager
 import android.widget.Toast
 import com.google.ar.core.Config
 import com.google.ar.core.Session
@@ -24,6 +27,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        setFullScreen()
 
         setupARCore()
     }
@@ -61,3 +65,13 @@ private fun Context.hasCameraPermission() =
 
 private fun Context.showToast(@StringRes stringRes: Int) =
     Toast.makeText(this, getString(stringRes), Toast.LENGTH_LONG).show()
+
+private fun Activity.setFullScreen() {
+    window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+            View.SYSTEM_UI_FLAG_FULLSCREEN or
+            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+    window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+}
