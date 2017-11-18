@@ -13,14 +13,14 @@ import android.os.Bundle
 import android.support.annotation.StringRes
 import android.support.design.widget.Snackbar
 import android.util.Log
+import android.view.GestureDetector
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.Toast
-import com.google.ar.core.Config
-import com.google.ar.core.Plane
-import com.google.ar.core.Pose
-import com.google.ar.core.Session
+import com.google.ar.core.*
 import kotlinx.android.synthetic.main.activity_main.*
+import java.util.concurrent.ArrayBlockingQueue
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 
@@ -35,14 +35,18 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     private val backgroundRenderer = BackgroundRenderer()
     private val androidRenderer = ObjectRenderer()
     private val androidShadowRenderer = ObjectRenderer()
+    private val pigRenderer = ObjectRenderer()
 
     private val viewMatrix = FloatArray(ARCORE_MATRIX_SIZE)
     private val projectionMatrix = FloatArray(ARCORE_MATRIX_SIZE)
-    private val androidAnchorMatrix = FloatArray(ARCORE_MATRIX_SIZE)
+    private val anchorMatrix = FloatArray(ARCORE_MATRIX_SIZE)
 
-    private val planeAttachments = mutableListOf<PlaneAttachment>()
+    private val androidAttachments = mutableListOf<PlaneAttachment>()
 
     private var detectingPlanesSnackbar: Snackbar? = null
+
+    private val queuedSingleTaps = ArrayBlockingQueue<MotionEvent>(16)
+    private val pigAttachments = mutableListOf<PlaneAttachment>()
 
     lateinit var session: Session
     lateinit var config: Config
@@ -112,37 +116,69 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
             frame.getViewMatrix(viewMatrix, 0)
 
             if (session.trackedPlanes.isNotEmpty()) {
-                Log.d(TAG, "${session.trackedPlanes.size} planes detected")
                 hideLoadingMessage()
 
-                if (session.trackedPlanes.size > planeAttachments.size) {
-                    session.removeAnchors(planeAttachments.map { it.anchor })
+                if (session.trackedPlanes.size > androidAttachments.size) {
+                    session.removeAnchors(androidAttachments.map { it.anchor })
                     session.trackedPlanes.forEach {
                         val anchor = session.addAnchor(it.centerPose)
-                        planeAttachments.add(PlaneAttachment(it, anchor))
+                        androidAttachments.add(PlaneAttachment(it, anchor))
                     }
                 }
             }
 
-            planeAttachments.forEach {
+            androidAttachments.forEach {
                 if (it.isTracking) {
                     drawAndroid(it.pose, frame.lightEstimate.pixelIntensity)
                 }
             }
+
+            handleTaps(frame)
+
+            pigAttachments.forEach {
+                if (it.isTracking) {
+                    drawPig(it.pose, frame.lightEstimate.pixelIntensity)
+                }
+            }
+
         } catch (t: Throwable) {
             // Avoid crashing the application due to unhandled exceptions.
             Log.e(TAG, "Exception on the OpenGL thread", t)
         }
     }
 
+    private fun handleTaps(frame: Frame) {
+        // Handling only one tap per frame, as taps are usually low frequency
+        // compared to frame rate.
+        val tap = queuedSingleTaps.poll()
+        if (tap != null && frame.trackingState == Frame.TrackingState.TRACKING) {
+            for (hit in frame.hitTest(tap)) {
+                // Check if any plane was hit, and if it was hit inside the plane polygon.
+                if (hit is PlaneHitResult && hit.isHitInPolygon) {
+                    // Hits are sorted by depth. Consider only closest hit on a plane.
+                    pigAttachments.add(PlaneAttachment(hit.plane, session.addAnchor(hit.hitPose)))
+                    break
+                }
+            }
+        }
+    }
+
     private fun drawAndroid(pose: Pose, lightIntensity: Float) {
-        pose.toMatrix(androidAnchorMatrix, 0)
+        pose.toMatrix(anchorMatrix, 0)
         val scaleFactor = 1.0f
         // Update and draw the model and its shadow.
-        androidRenderer.updateModelMatrix(androidAnchorMatrix, scaleFactor)
-        androidShadowRenderer.updateModelMatrix(androidAnchorMatrix, scaleFactor)
+        androidRenderer.updateModelMatrix(anchorMatrix, scaleFactor)
+        androidShadowRenderer.updateModelMatrix(anchorMatrix, scaleFactor)
         androidRenderer.draw(viewMatrix, projectionMatrix, lightIntensity)
         androidShadowRenderer.draw(viewMatrix, projectionMatrix, lightIntensity)
+    }
+
+    private fun drawPig(pose: Pose, lightIntensity: Float) {
+        pose.toMatrix(anchorMatrix, 0)
+        val scaleFactor = 0.05f
+        // Update and draw the model and its shadow.
+        pigRenderer.updateModelMatrix(anchorMatrix, scaleFactor)
+        pigRenderer.draw(viewMatrix, projectionMatrix, lightIntensity)
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
@@ -165,9 +201,25 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         androidShadowRenderer.createOnGlThread(this,"andy_shadow.obj", "andy_shadow.png")
         androidShadowRenderer.setBlendMode(ObjectRenderer.BlendMode.Shadow)
         androidShadowRenderer.setMaterialProperties(1.0f, 0.0f, 0.0f, 1.0f)
+
+        pigRenderer.createOnGlThread(this, "pig.obj", "pig.png")
+        pigRenderer.setMaterialProperties(0.0f, 3.5f, 1.0f, 6.0f)
     }
 
     private fun setupSurfaceView() {
+        val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                queuedSingleTaps.offer(e)
+                return true
+            }
+
+            override fun onDown(e: MotionEvent): Boolean {
+                return true
+            }
+        })
+
+        surfaceView.setOnTouchListener { _, event -> gestureDetector.onTouchEvent(event) }
+
         surfaceView.preserveEGLContextOnPause = true
         surfaceView.setEGLContextClientVersion(2)
         surfaceView.setEGLConfigChooser(8, 8, 8, 8, 16, 0) // Alpha used for plane blending.
