@@ -11,6 +11,7 @@ import android.opengl.GLSurfaceView
 import android.support.v7.app.AppCompatActivity
 import android.os.Bundle
 import android.support.annotation.StringRes
+import android.support.design.widget.Snackbar
 import android.util.Log
 import android.view.View
 import android.view.WindowManager
@@ -36,7 +37,9 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
 
     private val viewMatrix = FloatArray(ARCORE_MATRIX_SIZE)
     private val projectionMatrix = FloatArray(ARCORE_MATRIX_SIZE)
-    private val planeCenterMatrix = FloatArray(ARCORE_MATRIX_SIZE)
+    private val androidAnchorMatrix = FloatArray(ARCORE_MATRIX_SIZE)
+
+    private var detectingPlanesSnackbar: Snackbar? = null
 
     lateinit var session: Session
     lateinit var config: Config
@@ -44,10 +47,16 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-        setFullScreen()
 
         setupSurfaceView()
         setupARCore()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            setFullScreen()
+        }
     }
 
     override fun onPause() {
@@ -63,6 +72,8 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         super.onResume()
 
         if (hasCameraPermission()) {
+            showLoadingMessage()
+
             Log.d(TAG, "Resume ARCore session")
             // Note that order matters - see the note in onPause(), the reverse applies here.
             surfaceView.onResume()
@@ -97,28 +108,26 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
             // Get camera matrix and draw.
             frame.getViewMatrix(viewMatrix, 0)
 
-            // Compute lighting from average intensity of the image.
-            val lightIntensity = frame.lightEstimate.pixelIntensity
-
-            val scaleFactor = 1.0f
-            session.allPlanes.forEach { plane ->
-                if (plane.trackingState == Plane.TrackingState.TRACKING && plane.type == Plane.Type.HORIZONTAL_UPWARD_FACING) {
-                    // Get the current combined pose of an Anchor and Plane in world space. The Anchor
-                    // and Plane poses are updated during calls to session.update() as ARCore refines
-                    // its estimate of the world.
-                    plane.centerPose.toMatrix(planeCenterMatrix, 0)
-
-                    // Update and draw the model and its shadow.
-                    androidRenderer.updateModelMatrix(planeCenterMatrix, scaleFactor)
-                    androidShadowRenderer.updateModelMatrix(planeCenterMatrix, scaleFactor)
-                    androidRenderer.draw(viewMatrix, projectionMatrix, lightIntensity)
-                    androidShadowRenderer.draw(viewMatrix, projectionMatrix, lightIntensity)
+            if (session.trackedPlanes.isNotEmpty()) {
+                Log.d(TAG, "${session.trackedPlanes.size} planes detected")
+                hideLoadingMessage()
+                session.trackedPlanes.forEach {
+                    it.centerPose.toMatrix(androidAnchorMatrix, 0)
+                    drawAndroid(1.0f, frame.lightEstimate.pixelIntensity)
                 }
             }
         } catch (t: Throwable) {
             // Avoid crashing the application due to unhandled exceptions.
             Log.e(TAG, "Exception on the OpenGL thread", t)
         }
+    }
+
+    private fun drawAndroid(scaleFactor: Float, lightIntensity: Float) {
+        // Update and draw the model and its shadow.
+        androidRenderer.updateModelMatrix(androidAnchorMatrix, scaleFactor)
+        androidShadowRenderer.updateModelMatrix(androidAnchorMatrix, scaleFactor)
+        androidRenderer.draw(viewMatrix, projectionMatrix, lightIntensity)
+        androidShadowRenderer.draw(viewMatrix, projectionMatrix, lightIntensity)
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
@@ -160,7 +169,25 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
             finish()
         }
     }
+
+    private fun showLoadingMessage() {
+        runOnUiThread {
+            detectingPlanesSnackbar = Snackbar.make(findViewById(android.R.id.content), R.string.detecting_planes, Snackbar.LENGTH_INDEFINITE)
+            detectingPlanesSnackbar?.view?.alpha = 0.5f
+            detectingPlanesSnackbar?.show()
+        }
+    }
+
+    private fun hideLoadingMessage() {
+        detectingPlanesSnackbar?.let {
+            runOnUiThread { it.dismiss() }
+            detectingPlanesSnackbar = null
+        }
+    }
 }
+
+private val Session.trackedPlanes: Collection<Plane>
+    get() = allPlanes.filter { it.trackingState == Plane.TrackingState.TRACKING && it.type == Plane.Type.HORIZONTAL_UPWARD_FACING }
 
 private fun Context.hasCameraPermission() =
         checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED

@@ -2,4 +2,5 @@
     <string name="app_name">TryingOutARCore</string>
     <string name="camera_permission_needed">Camera permission is needed to run this application</string>
     <string name="ar_device_not_supported">This device does not support AR</string>
+    <string name="detecting_planes">Detecting planes…</string>
 </resources>
