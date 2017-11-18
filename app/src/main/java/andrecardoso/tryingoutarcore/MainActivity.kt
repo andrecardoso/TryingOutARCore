@@ -18,6 +18,7 @@ import android.view.WindowManager
 import android.widget.Toast
 import com.google.ar.core.Config
 import com.google.ar.core.Plane
+import com.google.ar.core.Pose
 import com.google.ar.core.Session
 import kotlinx.android.synthetic.main.activity_main.*
 import javax.microedition.khronos.egl.EGLConfig
@@ -38,6 +39,8 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
     private val viewMatrix = FloatArray(ARCORE_MATRIX_SIZE)
     private val projectionMatrix = FloatArray(ARCORE_MATRIX_SIZE)
     private val androidAnchorMatrix = FloatArray(ARCORE_MATRIX_SIZE)
+
+    private val planeAttachments = mutableListOf<PlaneAttachment>()
 
     private var detectingPlanesSnackbar: Snackbar? = null
 
@@ -111,9 +114,19 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
             if (session.trackedPlanes.isNotEmpty()) {
                 Log.d(TAG, "${session.trackedPlanes.size} planes detected")
                 hideLoadingMessage()
-                session.trackedPlanes.forEach {
-                    it.centerPose.toMatrix(androidAnchorMatrix, 0)
-                    drawAndroid(1.0f, frame.lightEstimate.pixelIntensity)
+
+                if (session.trackedPlanes.size > planeAttachments.size) {
+                    session.removeAnchors(planeAttachments.map { it.anchor })
+                    session.trackedPlanes.forEach {
+                        val anchor = session.addAnchor(it.centerPose)
+                        planeAttachments.add(PlaneAttachment(it, anchor))
+                    }
+                }
+            }
+
+            planeAttachments.forEach {
+                if (it.isTracking) {
+                    drawAndroid(it.pose, frame.lightEstimate.pixelIntensity)
                 }
             }
         } catch (t: Throwable) {
@@ -122,7 +135,9 @@ class MainActivity : AppCompatActivity(), GLSurfaceView.Renderer {
         }
     }
 
-    private fun drawAndroid(scaleFactor: Float, lightIntensity: Float) {
+    private fun drawAndroid(pose: Pose, lightIntensity: Float) {
+        pose.toMatrix(androidAnchorMatrix, 0)
+        val scaleFactor = 1.0f
         // Update and draw the model and its shadow.
         androidRenderer.updateModelMatrix(androidAnchorMatrix, scaleFactor)
         androidShadowRenderer.updateModelMatrix(androidAnchorMatrix, scaleFactor)
